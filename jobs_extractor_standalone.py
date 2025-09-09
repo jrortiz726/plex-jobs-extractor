@@ -2,24 +2,30 @@
 """
 Standalone Jobs Extractor for Plex to CDF
 Extracts production jobs as events in Cognite Data Fusion
-Completely self-contained with hardcoded configuration
+Designed to run as a Cognite Function with built-in CDF logging
 """
 
 import asyncio
 import aiohttp
-import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 from cognite.client import CogniteClient, ClientConfig
 from cognite.client.credentials import OAuthClientCredentials
 from cognite.client.data_classes import Asset, AssetList, Event, EventList
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# For CDF Functions, use print statements which are captured in function logs
+# CDF Functions automatically capture stdout/stderr
+def log_info(message: str):
+    """Log info message for CDF Functions"""
+    print(f"INFO: {message}")
+
+def log_error(message: str):
+    """Log error message for CDF Functions"""
+    print(f"ERROR: {message}")
+
+def log_warning(message: str):
+    """Log warning message for CDF Functions"""
+    print(f"WARNING: {message}")
 
 
 class StandaloneJobsExtractor:
@@ -71,7 +77,7 @@ class StandaloneJobsExtractor:
         # PCN prefix for multi-tenancy
         self.pcn_prefix = f"PCN{self.customer_id}"
         
-        logger.info(f"Initialized Jobs Extractor for PCN {self.customer_id}")
+        log_info(f"Initialized Jobs Extractor for PCN {self.customer_id}")
     
     async def fetch_jobs(self, session: aiohttp.ClientSession) -> List[Dict]:
         """Fetch jobs from Plex API"""
@@ -98,12 +104,12 @@ class StandaloneJobsExtractor:
         try:
             while True:
                 params['offset'] = offset
-                logger.info(f"Fetching jobs with offset {offset}")
+                log_info(f"Fetching jobs with offset {offset}")
                 
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status != 200:
                         error_text = await response.text()
-                        logger.error(f"Failed to fetch jobs: {response.status} - {error_text}")
+                        log_error(f"Failed to fetch jobs: {response.status} - {error_text}")
                         break
                     
                     data = await response.json()
@@ -120,7 +126,7 @@ class StandaloneJobsExtractor:
                         break
                     
                     all_jobs.extend(jobs)
-                    logger.info(f"Fetched {len(jobs)} jobs")
+                    log_info(f"Fetched {len(jobs)} jobs")
                     
                     # Check if more data available
                     if len(jobs) < 1000:
@@ -129,7 +135,7 @@ class StandaloneJobsExtractor:
                     offset += len(jobs)
                     
         except Exception as e:
-            logger.error(f"Error fetching jobs: {e}")
+            log_error(f"Error fetching jobs: {e}")
         
         return all_jobs
     
@@ -139,7 +145,7 @@ class StandaloneJobsExtractor:
             # Get job ID for external ID (the unique identifier)
             job_id = job.get('id') or job.get('jobId')
             if not job_id:
-                logger.warning(f"Job missing ID: {job}")
+                log_warning(f"Job missing ID: {job}")
                 return None
             
             # Get human-readable job number for description
@@ -262,7 +268,7 @@ class StandaloneJobsExtractor:
             return event
             
         except Exception as e:
-            logger.error(f"Error creating event for job {job}: {e}")
+            log_error(f"Error creating event for job {job}: {e}")
             return None
     
     def create_events_batch(self, events: List[Event]) -> Dict[str, List]:
@@ -303,31 +309,31 @@ class StandaloneJobsExtractor:
                             result['created'].extend([e.external_id for e in created])
                         elif isinstance(created, Event):
                             result['created'].append(created.external_id)
-                        logger.info(f"Created {len(batch)} events")
+                        log_info(f"Created {len(batch)} events")
                     except Exception as e:
-                        logger.error(f"Failed to create batch: {e}")
+                        log_error(f"Failed to create batch: {e}")
                         result['failed'].extend([e.external_id for e in batch])
             
             if result['duplicates']:
-                logger.info(f"Skipped {len(result['duplicates'])} duplicate events")
+                log_info(f"Skipped {len(result['duplicates'])} duplicate events")
                 
         except Exception as e:
-            logger.error(f"Error in create_events_batch: {e}")
+            log_error(f"Error in create_events_batch: {e}")
             result['failed'] = [e.external_id for e in events]
         
         return result
     
     async def extract_once(self):
         """Run a single extraction cycle"""
-        logger.info("Starting jobs extraction cycle")
+        log_info("Starting jobs extraction cycle")
         
         async with aiohttp.ClientSession() as session:
             # Fetch jobs from Plex
             jobs = await self.fetch_jobs(session)
-            logger.info(f"Fetched {len(jobs)} jobs from Plex")
+            log_info(f"Fetched {len(jobs)} jobs from Plex")
             
             if not jobs:
-                logger.info("No jobs to process")
+                log_info("No jobs to process")
                 return
             
             # Convert to events
@@ -337,26 +343,26 @@ class StandaloneJobsExtractor:
                 if event:
                     events.append(event)
             
-            logger.info(f"Created {len(events)} events from jobs")
+            log_info(f"Created {len(events)} events from jobs")
             
             # Create events in CDF
             if events:
                 result = self.create_events_batch(events)
-                logger.info(f"Created: {len(result['created'])}, "
+                log_info(f"Created: {len(result['created'])}, "
                           f"Duplicates: {len(result['duplicates'])}, "
                           f"Failed: {len(result['failed'])}")
     
     async def run_continuous(self):
         """Run continuous extraction with configured interval"""
-        logger.info(f"Starting continuous extraction with {self.extraction_interval}s interval")
+        log_info(f"Starting continuous extraction with {self.extraction_interval}s interval")
         
         while True:
             try:
                 await self.extract_once()
             except Exception as e:
-                logger.error(f"Error in extraction cycle: {e}")
+                log_error(f"Error in extraction cycle: {e}")
             
-            logger.info(f"Waiting {self.extraction_interval} seconds until next extraction")
+            log_info(f"Waiting {self.extraction_interval} seconds until next extraction")
             await asyncio.sleep(self.extraction_interval)
     
     def run(self, continuous: bool = False):
@@ -367,8 +373,48 @@ class StandaloneJobsExtractor:
             asyncio.run(self.extract_once())
 
 
+def handle(data: dict = None, client: CogniteClient = None) -> Dict[str, Any]:
+    """
+    CDF Function handler for scheduled execution
+    
+    Args:
+        data: Optional configuration data passed to the function
+        client: CogniteClient instance (provided by CDF Functions runtime)
+    
+    Returns:
+        Dict with extraction results
+    """
+    log_info("CDF Function handler invoked")
+    
+    try:
+        # Create and run extractor
+        extractor = StandaloneJobsExtractor()
+        
+        # If client is provided by CDF runtime, use it instead
+        if client:
+            extractor.client = client
+            log_info("Using CDF-provided client")
+        
+        # Run single extraction
+        asyncio.run(extractor.extract_once())
+        
+        return {
+            "status": "success",
+            "message": "Jobs extraction completed",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        log_error(f"Function execution failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+
+
 def main():
-    """Main function"""
+    """Main function for local/standalone execution"""
     import argparse
     
     parser = argparse.ArgumentParser(description='Standalone Plex Jobs Extractor')
@@ -390,13 +436,13 @@ def main():
         # Override interval if provided
         if args.interval:
             extractor.extraction_interval = args.interval
-            logger.info(f"Overriding interval to {args.interval} seconds")
+            log_info(f"Overriding interval to {args.interval} seconds")
         
         extractor.run(continuous=args.continuous)
     except KeyboardInterrupt:
-        logger.info("Extraction stopped by user")
+        log_info("Extraction stopped by user")
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        log_error(f"Fatal error: {e}")
         raise
 
 
