@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: plex-extractors
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plex-extractor-config
+  namespace: plex-extractors
+data:
+  EXTRACTION_MODE: "continuous"
+  LOG_LEVEL: "INFO"
+  MASTER_EXTRACTION_INTERVAL: "86400"
+  JOBS_EXTRACTION_INTERVAL: "300"
+  PRODUCTION_EXTRACTION_INTERVAL: "300"
+  INVENTORY_EXTRACTION_INTERVAL: "300"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: plex-extractor-secrets
+  namespace: plex-extractors
+type: Opaque
+stringData:
+  # Replace with actual values
+  CDF_HOST: "https://westeurope-1.cognitedata.com"
+  CDF_PROJECT: "your-project"
+  CDF_CLIENT_ID: "your-client-id"
+  CDF_CLIENT_SECRET: "your-client-secret"
+  CDF_TOKEN_URL: "https://your-auth0.auth0.com/oauth/token"
+  PLEX_API_KEY: "your-plex-api-key"
+  PLEX_CUSTOMER_ID: "340884"
+  FACILITY_NAME: "Main Manufacturing Plant"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plex-extractor
+  namespace: plex-extractors
+  labels:
+    app: plex-extractor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: plex-extractor
+  template:
+    metadata:
+      labels:
+        app: plex-extractor
+    spec:
+      containers:
+      - name: extractor
+        image: plex-cdf-extractor:latest
+        imagePullPolicy: Always
+        command: ["python", "orchestrator.py"]
+        args: ["--mode", "continuous"]
+        envFrom:
+        - configMapRef:
+            name: plex-extractor-config
+        - secretRef:
+            name: plex-extractor-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+        - name: state
+          mountPath: /app/state
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: state
+        persistentVolumeClaim:
+          claimName: plex-extractor-state
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plex-extractor-state
+  namespace: plex-extractors
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plex-extractor-metrics
+  namespace: plex-extractors
+spec:
+  selector:
+    app: plex-extractor
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP

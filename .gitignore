@@ -1,4 +1,42 @@
+# Python
 venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Claude Code
+CLAUDE.md
+.claude/
+claude.json
+.claudeignore
+*.claude-session
+*.claude-backup
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+orchestrator.log
+
+# State files
+state/
+*.state
+*.cache
+
+# Temporary files
+tmp/
+temp/
+*.tmp

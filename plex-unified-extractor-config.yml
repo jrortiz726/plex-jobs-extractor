@@ -1,0 +1,107 @@
+# plex-unified-extractor-config.yaml
+version: 1.0
+
+cognite:
+  host: https://api.cognitedata.com
+  project: ${CDF_PROJECT}
+  idp-authentication:
+    client-id: ${CDF_CLIENT_ID}
+    client-secret: ${CDF_CLIENT_SECRET}
+    token-url: https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token
+    scopes:
+      - "https://api.cognitedata.com/.default"
+
+source:
+  type: plex-mes
+  base-url: https://connect.plex.com
+  headers:
+    X-Plex-Connect-Api-Key: fGGv6CAq8l3a1jwJ9uA6ltkvzGSBlolT
+    X-Plex-Connect-Customer-Id: "340884"
+  
+  endpoints:
+    jobs:
+      path: /scheduling/v1/jobs
+      schedule: "*/15 * * * *"
+      pagination:
+        type: offset
+        page-size: 1000
+      destination:
+        type: hybrid
+        assets:
+          external-id-prefix: JOB_
+          parent-external-id: PRODUCTION_SCHEDULE
+        events:
+          type: job_lifecycle
+          
+    job-operations:
+      path: /scheduling/v1/jobs/{jobId}/operations
+      schedule: "*/10 * * * *"
+      requires: jobs.jobId
+      destination:
+        type: events
+        event-type: operation
+        
+    workcenter-status:
+      path: /production/v1/workcenters/{workcenterId}/status
+      schedule: "*/1 * * * *"
+      destination:
+        type: time-series
+        external-id-template: TS_WC_{workcenterId}_STATUS
+        
+    production-entries:
+      path: /production/v1/production-entries
+      schedule: "*/5 * * * *"
+      destination:
+        type: hybrid
+        events:
+          type: production_transaction
+        time-series:
+          - field: quantity_good
+            external-id-template: TS_WC_{workcenterId}_THROUGHPUT
+          - field: scrap_count
+            external-id-template: TS_WC_{workcenterId}_SCRAP_RATE
+            
+    production-summary:
+      path: /production/v1/production-entries/summary
+      schedule: "0 * * * *"
+      destination:
+        type: time-series
+        metrics:
+          - oee_availability: TS_{workcenterId}_OEE_AVAILABILITY
+          - oee_performance: TS_{workcenterId}_OEE_PERFORMANCE
+          - oee_quality: TS_{workcenterId}_OEE_QUALITY
+          
+    scheduling:
+      path: /routing/v1/schedules/{scheduleId}/details
+      schedule: "*/30 * * * *"
+      destination:
+        type: events
+        event-type: production_schedule
+
+data-mapping:
+  asset-hierarchy:
+    - ENTERPRISE_ROOT
+      - PLANT_MAIN
+        - PRODUCTION_LINE_A
+          - WC_MACHINING_001
+          - WC_ASSEMBLY_001
+        - PRODUCTION_LINE_B
+      - PRODUCTION_SCHEDULE
+        - ACTIVE_JOBS
+
+state-management:
+  type: raw
+  database: extractor_state
+  table: plex_unified_state
+  
+monitoring:
+  metrics-port: 9090
+  health-check-port: 8080
+  
+error-handling:
+  retry:
+    max-attempts: 5
+    backoff-factor: 2.0
+  circuit-breaker:
+    failure-threshold: 10
+    timeout: 300
