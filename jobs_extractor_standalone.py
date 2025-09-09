@@ -136,29 +136,67 @@ class StandaloneJobsExtractor:
     def create_job_event(self, job: Dict) -> Optional[Event]:
         """Convert Plex job to CDF event"""
         try:
-            job_id = job.get('id') or job.get('jobNo') or job.get('jobId')
+            # Get job ID for external ID (the unique identifier)
+            job_id = job.get('id') or job.get('jobId')
             if not job_id:
                 logger.warning(f"Job missing ID: {job}")
                 return None
             
+            # Get human-readable job number for description
+            job_number = job.get('jobNo') or job.get('jobNumber') or job.get('job_no') or str(job_id)[:10]
+            
+            # Get part information
+            part_number = job.get('partNumber') or job.get('partNo') or ''
+            part_name = job.get('partName') or job.get('part_name') or 'Unknown Part'
+            
+            # Get workcenter information
+            workcenter = job.get('workcenterCode') or job.get('workcenterName') or job.get('workcenterId') or ''
+            
+            # Get quantity and make it readable
+            quantity = job.get('quantity') or job.get('qty') or 0
+            quantity_str = f"{quantity:,}" if quantity else "0"
+            
             # Determine job status and subtype
             status = job.get('status', '').lower()
-            if 'complete' in status:
+            if 'complete' in status or 'finish' in status:
                 subtype = 'completed'
-            elif 'progress' in status or 'active' in status:
+                status_display = 'Completed'
+            elif 'progress' in status or 'active' in status or 'running' in status:
                 subtype = 'in_progress'
+                status_display = 'In Progress'
             else:
                 subtype = 'scheduled'
+                status_display = 'Scheduled'
             
-            # Build external ID with PCN prefix
+            # Build external ID with PCN prefix (using the unique ID)
             external_id = f"{self.pcn_prefix}_JOB_{job_id}"
+            
+            # Build human-readable description
+            description_parts = [f"Job #{job_number}"]
+            
+            if part_number and part_name:
+                description_parts.append(f"{part_name} ({part_number})")
+            elif part_name:
+                description_parts.append(part_name)
+            elif part_number:
+                description_parts.append(f"Part {part_number}")
+            
+            if quantity:
+                description_parts.append(f"Qty: {quantity_str}")
+            
+            if workcenter:
+                description_parts.append(f"WC: {workcenter}")
+            
+            description_parts.append(f"[{status_display}]")
+            
+            description = " | ".join(description_parts)
             
             # Get timestamps
             start_time = None
             end_time = None
             
             # Try different date fields
-            for start_field in ['startDate', 'scheduledStartDate', 'actualStartDate']:
+            for start_field in ['startDate', 'scheduledStartDate', 'actualStartDate', 'start_date']:
                 if start_field in job and job[start_field]:
                     try:
                         start_time = int(datetime.fromisoformat(
@@ -168,7 +206,7 @@ class StandaloneJobsExtractor:
                     except:
                         pass
             
-            for end_field in ['endDate', 'scheduledEndDate', 'actualEndDate']:
+            for end_field in ['endDate', 'scheduledEndDate', 'actualEndDate', 'end_date', 'completedDate']:
                 if end_field in job and job[end_field]:
                     try:
                         end_time = int(datetime.fromisoformat(
@@ -182,33 +220,39 @@ class StandaloneJobsExtractor:
             if not start_time:
                 start_time = int(datetime.now(timezone.utc).timestamp() * 1000)
             
-            # Build metadata
+            # Build metadata with both IDs
             metadata = {
                 'pcn': self.customer_id,
                 'facility': self.facility_name,
                 'source': 'plex_jobs',
-                'job_id': str(job_id),
-                'status': status
+                'job_id': str(job_id),  # Keep the unique ID in metadata
+                'job_number': str(job_number),  # Add human-readable job number
+                'status': status_display
             }
             
             # Add optional metadata fields
-            if job.get('partNumber'):
-                metadata['part_number'] = str(job['partNumber'])
-            if job.get('partName'):
-                metadata['part_name'] = str(job['partName'])
-            if job.get('workcenterCode'):
-                metadata['workcenter'] = str(job['workcenterCode'])
-            if job.get('quantity'):
-                metadata['quantity'] = str(job['quantity'])
+            if part_number:
+                metadata['part_number'] = str(part_number)
+            if part_name:
+                metadata['part_name'] = str(part_name)
+            if workcenter:
+                metadata['workcenter'] = str(workcenter)
+            if quantity:
+                metadata['quantity'] = quantity_str
+                metadata['quantity_raw'] = str(quantity)
             if job.get('priority'):
-                metadata['priority'] = str(job['priority'])
+                metadata['priority'] = str(job.get('priority'))
+            if job.get('customer'):
+                metadata['customer'] = str(job.get('customer'))
+            if job.get('orderNumber'):
+                metadata['order_number'] = str(job.get('orderNumber'))
             
             # Create event
             event = Event(
                 external_id=external_id,
                 type='production_job',
                 subtype=subtype,
-                description=f"Job {job_id} - {job.get('partName', 'Unknown Part')}",
+                description=description,
                 start_time=start_time,
                 end_time=end_time,
                 metadata=metadata,
