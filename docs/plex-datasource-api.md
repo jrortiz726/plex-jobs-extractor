@@ -1,3 +1,10 @@
+Admin User = RA-Demo.Admin 
+Admin Company = RA-Discrete 
+Admin PW = 123plex123 
+  
+JSON Datasource User = RockwellProcessWs@plex.com 
+JSON Datasource User PW = 5915cbc-431a-4 
+JSON Datasource Documenation = https://ra-process.on.plex.com/Platform/CustomerDataSourceManager
 
 Source URL: https://docs.plex.com/pmc/en-us/integration/data-source-api/data-source-api.htm
 

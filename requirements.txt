@@ -1,3 +1,6 @@
+cognite-sdk==7.84.0
+aiohttp==3.12.0
+python-dotenv==1.0.1
 certifi==2025.8.3
 charset-normalizer==3.4.3
 idna==3.10

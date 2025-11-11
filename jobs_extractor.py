@@ -16,13 +16,14 @@ import sys
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 from dotenv import load_dotenv
 from cognite.client.data_classes import Event
 
 from base_extractor import BaseExtractor, BaseExtractorConfig
 from multi_facility_config import MultiTenantNamingConvention, FacilityConfig
+from id_resolver import AssetIDResolver, EventAssetLinker, get_resolver
 
 # Load environment variables
 load_dotenv()
@@ -61,7 +62,11 @@ class PlexJobsExtractor(BaseExtractor):
         # Track processed jobs to avoid duplicates
         self.processed_job_events = set()
         
-        logger.info(f"Jobs Extractor initialized for PCN {config.facility.pcn}")
+        # Initialize ID resolver for asset linking
+        self.id_resolver = get_resolver(self.client)
+        self.event_linker = EventAssetLinker(self.id_resolver)
+        
+        logger.info(f"Jobs Extractor initialized for PCN {config.facility.pcn} with asset ID resolver")
     
     def get_required_datasets(self) -> List[str]:
         """Return required dataset types for jobs"""
@@ -182,13 +187,25 @@ class PlexJobsExtractor(BaseExtractor):
                 # Parse timestamps
                 start_time, end_time = self.parse_job_timestamps(job)
                 
-                # Build asset links - disabled for now as CDF requires numeric IDs not external IDs
-                # TODO: Resolve asset external IDs to numeric IDs for proper linking
-                asset_ids = []
+                # Build asset links using numeric IDs
+                asset_external_ids = []
                 
-                # Get workcenter and part IDs for metadata
+                # Get workcenter and part IDs for metadata and linking
                 wc_id = job.get('workcenterId') or job.get('workcenterCode') or ''
                 part_id = job.get('partId') or job.get('partNumber') or ''
+                
+                # Add workcenter asset link if available
+                if wc_id:
+                    wc_external_id = self.naming.create_external_id('workcenter', str(wc_id))
+                    asset_external_ids.append(wc_external_id)
+                
+                # Add part asset link if available  
+                if part_id:
+                    part_external_id = self.naming.create_external_id('part', str(part_id))
+                    asset_external_ids.append(part_external_id)
+                
+                # Resolve external IDs to numeric IDs
+                asset_ids = self.event_linker.prepare_event_asset_ids(asset_external_ids)
                 
                 # Create the event
                 event = Event(
